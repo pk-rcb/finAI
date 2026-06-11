@@ -1,0 +1,8 @@
+langgraph
+langchain
+google-genai
+pydantic
+tavily-python
+pandas
+numpy
+pillow
