@@ -146,68 +146,161 @@ def vision_node(state: ApplicationState):
         return {"messages": messages + [msg]}
 
 # --- DEBATE PANEL ---
+# ==========================================
+# 4. TOOL-STRAPPED DEBATE PANEL (UPGRADED)
+# ==========================================
+
+# We use temperature=0.4 for the debaters to allow creative analytical connections,
+# but we will use temperature=0.0 for the Judge to ensure strict objectivity.
 debate_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.4)
 debate_agent = debate_llm.bind_tools([get_company_metrics])
 
 def bull_agent(state: ApplicationState):
-    sys_msg = SystemMessage(content="You are a bullish stock analyst. Use your tools to look up the stock metrics. Then, write a 2-sentence argument for why the user SHOULD buy the stock based ON THE DATA.")
-    response = debate_agent.invoke([sys_msg] + state["messages"])
-    messages = state["messages"] + [response]
+    print("\n   🐂 BULL AGENT: Executing live market sweep for upside catalysts...")
+    messages = state["messages"]
+    
+    # 1. The Institutional Bull Prompt
+    sys_msg = SystemMessage(content="""You are an aggressive venture capitalist and top-tier growth investor. 
+    Use the get_company_metrics tool to pull live web data. 
+    Your strict objective: Build a highly compelling, data-backed thesis for why this stock will OUTPERFORM the market.
+    Focus exclusively on:
+    1. Macro tailwinds and sector growth.
+    2. Undervalued fundamentals (P/E expansion potential).
+    3. Positive news sentiment and upcoming catalysts.
+    Write a dense, 2-paragraph bullish thesis.""")
+    
+    # 2. Tool Execution Loop
+    response = debate_agent.invoke([sys_msg] + messages)
     if response.tool_calls:
         tool_call = response.tool_calls[0]
         tool_result = get_company_metrics.invoke(tool_call)
         tool_msg = ToolMessage(content=str(tool_result), tool_call_id=tool_call["id"], name=tool_call["name"])
-        final_arg = debate_llm.invoke([sys_msg] + messages + [tool_msg])
-        return {"messages": messages + [tool_msg, final_arg]}
-    return {"messages": messages}
+        
+        # 3. Final Bull Synthesis
+        final_argument = debate_llm.invoke([sys_msg] + messages + [response, tool_msg])
+        final_argument.content = f"🟢 **THE BULL THESIS:**\n{final_argument.content}"
+        return {"messages": messages + [response, tool_msg, final_argument]}
+        
+    response.content = f"🟢 **THE BULL THESIS:**\n{response.content}"
+    return {"messages": messages + [response]}
 
 def bear_agent(state: ApplicationState):
-    sys_msg = SystemMessage(content="You are a bearish stock analyst. Use your tools to look up the stock metrics. Read the bull's argument, and write a sharp 2-sentence counter-argument focusing on valuation risks and bad data.")
-    response = debate_agent.invoke([sys_msg] + state["messages"])
-    messages = state["messages"] + [response]
+    print("   🐻 BEAR AGENT: Analyzing Bull thesis and hunting for downside risk...")
+    messages = state["messages"]
+    
+    # 1. The Institutional Bear Prompt (Adversarial Setup)
+    sys_msg = SystemMessage(content="""You are a cynical, risk-averse short-seller. 
+    You have just read the Bull's thesis in the chat history. 
+    Use the get_company_metrics tool to pull live web data to actively DISPROVE the Bull's points.
+    Your strict objective: Build a devastating counter-argument focusing on:
+    1. Overvaluation risks and shrinking margins.
+    2. Regulatory headwinds or supply chain bottlenecks.
+    3. Poor recent earnings or negative news sentiment.
+    Write a dense, 2-paragraph bearish thesis that directly attacks the Bull's optimism.""")
+    
+    # 2. Tool Execution Loop
+    response = debate_agent.invoke([sys_msg] + messages)
     if response.tool_calls:
         tool_call = response.tool_calls[0]
         tool_result = get_company_metrics.invoke(tool_call)
         tool_msg = ToolMessage(content=str(tool_result), tool_call_id=tool_call["id"], name=tool_call["name"])
-        final_arg = debate_llm.invoke([sys_msg] + messages + [tool_msg])
-        return {"messages": messages + [tool_msg, final_arg]}
-    return {"messages": messages}
+        
+        # 3. Final Bear Synthesis
+        final_argument = debate_llm.invoke([sys_msg] + messages + [response, tool_msg])
+        final_argument.content = f"🔴 **THE BEAR THESIS:**\n{final_argument.content}"
+        return {"messages": messages + [response, tool_msg, final_argument]}
+        
+    response.content = f"🔴 **THE BEAR THESIS:**\n{response.content}"
+    return {"messages": messages + [response]}
 
 def judge_agent(state: ApplicationState):
-    sys_msg = SystemMessage(content="""You are a ruthless, highly objective portfolio manager. 
-    Read the preceding bull and bear arguments, and the live web data they cite. 
-    Write a final, highly opinionated 3-sentence verdict on whether the stock is a buy, hold, or sell. 
-    Do NOT include generic financial disclaimers.""")
-    response = debate_llm.invoke([sys_msg] + state["messages"])
+    print("   ⚖️ JUDGE AGENT: Weighing arguments and establishing final verdict...")
+    
+    # 1. The Strict Judge Prompt (Temperature 0.0)
+    sys_msg = SystemMessage(content="""You are the Chief Investment Officer (CIO) overseeing these two analysts.
+    Read the exact data points presented in the Bull Thesis and the Bear Thesis.
+    You must act coldly and mathematically. Do not hallucinate data.
+    
+    Output your final verdict in this exact format:
+    **⚖️ CIO VERDICT & SYNTHESIS:**
+    - **Strengths Validated:** (1 sentence summarizing the Bull's best point)
+    - **Risks Validated:** (1 sentence summarizing the Bear's best point)
+    - **Final Rating:** [STRONG BUY / BUY / HOLD / SELL / STRONG SELL]
+    - **Actionable Summary:** (2 sentences explaining the final rating based on the balance of the debate).
+    
+    DO NOT include generic financial disclaimers like 'consult an advisor'. Be decisive.""")
+    
+    # 2. Final Deterministic Synthesis
+    final_judge_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0)
+    response = final_judge_llm.invoke([sys_msg] + state["messages"])
+    
     return {"messages": state["messages"] + [response]}
-
 # --- FUNDAMENTAL AGENT ---
 def fundamental_node(state: ApplicationState):
+    print("\n   🔓 [HUMAN APPROVED] Fundamental Agent is now executing...")
+    
+    # 1. Get the user's original query
     user_message = state["messages"][0].content
+    
+    # 2. Extract just the core ticker using the LLM
     extractor_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0)
-    ticker_query = extractor_llm.invoke([
-        SystemMessage(content="""Extract the stock ticker symbol from the text. 
-        1. Return ONLY the uppercase ticker symbol (e.g., AAPL).
-        2. If the stock is an Indian company (e.g., Bharti Airtel, Reliance, TCS), MUST append '.NS' (e.g., BHARTIARTL.NS)."""),
+    raw_ticker = extractor_llm.invoke([
+        SystemMessage(content="Extract the stock ticker symbol from the text. Return ONLY the uppercase ticker symbol (e.g., AAPL, BHARTIARTL)."),
         HumanMessage(content=user_message)
-    ]).content.strip().upper().replace("'", "").replace('"', "")
+    ]).content.strip().upper().replace("'", "").replace('"', "").replace("$", "")
+    
+    # --- PROGRAMMATIC SAFETY NET ---
+    indian_stocks = ["BHARTIAIRTEL", "BHARTIARTL", "TCS", "RELIANCE", "INFY", "WIPRO", "HDFCBANK"]
+    if raw_ticker in indian_stocks:
+        if raw_ticker == "BHARTIAIRTEL":
+            raw_ticker = "BHARTIARTL" 
+        ticker_query = f"{raw_ticker}.NS"
+    else:
+        ticker_query = raw_ticker
+        
+    print(f"   [System Log: Ticker '{ticker_query}' finalized. Downloading financial data...]")
     
     try:
+        # 3. Use yfinance to pull the real fundamental data securely
         stock = yf.Ticker(ticker_query)
         info = stock.info
+        
+        # 4. Format the raw financial data safely
         def fmt(val): return f"${val:,.0f}" if isinstance(val, (int, float)) else val
         
-        report = f"📈 **FUNDAMENTAL ANALYSIS: {ticker_query}**\n\n"
-        report += f"**Valuation & Profitability:**\n• Trailing P/E: {info.get('trailingPE', 'N/A')}\n• Gross Margins: {info.get('grossMargins', 0) * 100:.2f}%\n"
-        report += f"\n**Balance Sheet & Cash Flow:**\n• Total Cash: {fmt(info.get('totalCash', 'N/A'))}\n• Total Debt: {fmt(info.get('totalDebt', 'N/A'))}\n• Free Cash Flow: {fmt(info.get('freeCashflow', 'N/A'))}\n"
+        report = f"**Valuation & Profitability:**\n"
+        report += f"• Trailing P/E: {info.get('trailingPE', 'N/A')}\n"
+        report += f"• Gross Margins: {info.get('grossMargins', 0) * 100:.2f}%\n"
+        report += f"• Return on Equity (ROE): {info.get('returnOnEquity', 0) * 100:.2f}%\n\n"
+        
+        report += f"**Balance Sheet & Cash Flow:**\n"
+        report += f"• Total Cash: {fmt(info.get('totalCash', 'N/A'))}\n"
+        report += f"• Total Debt: {fmt(info.get('totalDebt', 'N/A'))}\n"
+        report += f"• Free Cash Flow: {fmt(info.get('freeCashflow', 'N/A'))}\n"
+        report += f"• Debt-To-Equity Ratio: {info.get('debtToEquity', 'N/A')}\n"
 
-        analysis_sys = SystemMessage(content="You are a Wall Street fundamental analyst. Read the provided financial data and write a 2-sentence summary of the company's balance sheet health.")
-        analysis = extractor_llm.invoke([analysis_sys, HumanMessage(content=report)])
-        msg = AIMessage(content=f"🔓 *[Human Approved]*\n\n{report}\n\n**Analyst Summary:**\n{analysis.content}")
+        print("   [System Log: Passing raw financials to LLM for deep fundamental synthesis...]")
+
+        # 5. The Deep Synthesis Pass (NEW: Institutional Reasoning Layer)
+        analysis_sys = SystemMessage(content="""You are a Wall Street fundamental equity analyst. 
+        Read the provided raw quantitative financial metrics for the requested company.
+        You must write a highly detailed, professional, 3-paragraph fundamental analysis covering:
+        1. Profitability & Valuation: Analyze the P/E ratio and margins. Does this point to an overvalued tech stock or a value play?
+        2. Solvency & Liquidity: Evaluate the debt-to-equity ratio against the free cash flow. Are they over-leveraged? Can they survive a macro downturn?
+        3. Final Analyst Assessment: Provide a grounded conclusion on the long-term fundamental health of the business.
+        Do not just repeat the numbers back; interpret what they mean for a long-term investor holding the stock.""")
+        
+        synthesis_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2)
+        analysis = synthesis_llm.invoke([analysis_sys, HumanMessage(content=f"Ticker: {ticker_query}\n\n{report}")])
+        
+        # 6. Format the Final Output beautifully for Streamlit
+        final_response = f"🔓 *[Human Approved Execution]*\n\n📈 **DEEP FUNDAMENTAL ANALYSIS: {ticker_query}**\n\n### 1. Raw Quantitative Data\n{report}\n\n### 2. Chief Analyst Synthesis\n{analysis.content}"
+        msg = AIMessage(content=final_response)
+        
     except Exception as e:
-        msg = AIMessage(content=f"Error pulling fundamental data for {ticker_query}: {str(e)}")
+        msg = AIMessage(content=f"Error pulling fundamental data: {str(e)}")
+        
     return {"messages": list(state["messages"]) + [msg]}
-
 # --- PORTFOLIO AGGREGATOR ---
 def portfolio_node(state: ApplicationState):
     print("\n   💼 PORTFOLIO AGGREGATOR: Booting up...")
