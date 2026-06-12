@@ -1,8 +1,9 @@
 langgraph
 langchain
-google-genai
-pydantic
+langchain-core
+langchain-groq
 tavily-python
-pandas
-numpy
+yfinance
+pydantic
+streamlit
 pillow
