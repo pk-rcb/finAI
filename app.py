@@ -210,38 +210,61 @@ def fundamental_node(state: ApplicationState):
 
 # --- PORTFOLIO AGGREGATOR ---
 def portfolio_node(state: ApplicationState):
-    user_message = state["messages"][0].content # Get original user prompt
-    extractor_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0).with_structured_output(PortfolioExtraction)
-    extracted_portfolio = extractor_llm.invoke(user_message)
+    print("\n   💼 PORTFOLIO AGGREGATOR: Booting up...")
+    user_message = state["messages"][0].content
     
-    total_portfolio_value = 0.0
+    # 1. Extraction Pass (Pydantic)
+    extractor = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0).with_structured_output(PortfolioExtraction)
+    extracted = extractor.invoke(user_message)
+    
+    total_val = 0.0
     asset_details = []
     
-    for asset in extracted_portfolio.assets:
+    # 2. Safe Computation Pass (Python Math Engine)
+    raw_data_string = "Raw Portfolio Data:\n"
+    for asset in extracted.assets:
         try:
             hist = yf.Ticker(asset.ticker).history(period="1d")
             if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
+                price = hist['Close'].iloc[-1]
                 currency = "INR" if asset.ticker.endswith(".NS") else "USD"
-                price_usd = current_price / 83.0 if currency == "INR" else current_price
+                
+                # Normalize to USD for risk math (using a static 83 INR/USD conversion for this demo)
+                price_usd = price / 83.0 if currency == "INR" else price
                 total_value = price_usd * asset.shares
-                total_portfolio_value += total_value
+                total_val += total_value
+                
                 asset_details.append({
                     "ticker": asset.ticker, "shares": asset.shares,
-                    "price_native": current_price, "currency": currency, "total_value_usd": total_value
+                    "price": price, "currency": currency, "value_usd": total_value
                 })
         except Exception:
-            pass 
+            pass
             
-    report = f"\n📊 **PORTFOLIO RISK & ALLOCATION REPORT**\n**Total Estimated Value:** ${total_portfolio_value:,.2f} USD\n\n"
-    for asset in asset_details:
-        weight = (asset['total_value_usd'] / total_portfolio_value) * 100 if total_portfolio_value > 0 else 0
-        report += f"🔹 **{asset['ticker']}**: {asset['shares']} shares @ {asset['currency']} {asset['price_native']:.2f} *(Allocation: {weight:.1f}%)*\n"
-        if weight > 40:
-            report += f"   ⚠️ *High Concentration Risk: Consider diversifying.*\n"
-            
-    return {"messages": list(state["messages"]) + [AIMessage(content=report)]}
+    # 3. Assemble the Math Context
+    raw_data_string += f"Total Value: ${total_val:,.2f} USD\n"
+    for a in asset_details:
+        weight = (a['value_usd'] / total_val) * 100 if total_val > 0 else 0
+        raw_data_string += f"- {a['ticker']}: {a['shares']} shares ({weight:.1f}% Allocation)\n"
 
+    # 4. The Deep Synthesis Pass (NEW: LLM Reasoning Layer)
+    print("   [System Log: Injecting safe math into LLM for deep analysis...]")
+    synthesis_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2)
+    
+    synthesis_prompt = SystemMessage(content="""You are a top-tier institutional portfolio manager. 
+    I will provide you with the exact mathematical breakdown of a client's portfolio.
+    You must write a highly detailed, professional, 3-paragraph portfolio analysis covering:
+    1. A structural breakdown of their holdings and likely sector exposure.
+    2. Specific concentration risks (flag critically if any asset is >40% of the portfolio).
+    3. Actionable, strategic advice for improving diversification and balancing risk-adjusted returns.
+    Do not just repeat the math to them; provide deep, expert-level financial reasoning.""")
+    
+    analysis = synthesis_llm.invoke([synthesis_prompt, HumanMessage(content=raw_data_string)])
+    
+    # 5. Format Final Output
+    final_report = f"📊 **COMPREHENSIVE PORTFOLIO ANALYSIS**\n\n**Data Summary:**\n{raw_data_string}\n\n**CIO Strategic Insight:**\n{analysis.content}"
+    
+    return {"messages": list(state["messages"]) + [AIMessage(content=final_report)]}
 # ==========================================
 # 5. GRAPH COMPILATION
 # ==========================================
