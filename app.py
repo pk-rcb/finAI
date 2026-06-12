@@ -238,34 +238,33 @@ def judge_agent(state: ApplicationState):
 # --- FUNDAMENTAL AGENT ---
 def fundamental_node(state: ApplicationState):
     print("\n   🔓 [HUMAN APPROVED] Fundamental Agent is now executing...")
-    
-    # 1. Get the user's original query
     user_message = state["messages"][0].content
     
-    # 2. Extract just the core ticker using the LLM
+    # 1. Extraction Pass
     extractor_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0)
-    raw_ticker = extractor_llm.invoke([
-        SystemMessage(content="Extract the stock ticker symbol from the text. Return ONLY the uppercase ticker symbol (e.g., AAPL, BHARTIARTL)."),
+    
+    # 2. UPGRADED: Dynamic Global Ticker Extraction (No more hardcoded lists)
+    ticker_query = extractor_llm.invoke([
+        SystemMessage(content="""Extract the stock ticker symbol from the text. 
+        CRITICAL RULE: If the user is asking about an Indian company (NSE/BSE), you MUST dynamically append '.NS' to the ticker (e.g., ABSLAMC.NS, RELIANCE.NS, ZOMATO.NS). 
+        Return ONLY the final uppercase ticker symbol."""),
         HumanMessage(content=user_message)
     ]).content.strip().upper().replace("'", "").replace('"', "").replace("$", "")
     
-    # --- PROGRAMMATIC SAFETY NET ---
-    indian_stocks = ["BHARTIAIRTEL", "BHARTIARTL", "TCS", "RELIANCE", "INFY", "WIPRO", "HDFCBANK"]
-    if raw_ticker in indian_stocks:
-        if raw_ticker == "BHARTIAIRTEL":
-            raw_ticker = "BHARTIARTL" 
-        ticker_query = f"{raw_ticker}.NS"
-    else:
-        ticker_query = raw_ticker
-        
     print(f"   [System Log: Ticker '{ticker_query}' finalized. Downloading financial data...]")
     
     try:
-        # 3. Use yfinance to pull the real fundamental data securely
         stock = yf.Ticker(ticker_query)
         info = stock.info
         
-        # 4. Format the raw financial data safely
+        # 3. UPGRADED: THE ANTI-HALLUCINATION SHORT-CIRCUIT
+        # If the API returns no info, or core metrics are missing, abort the LLM analysis entirely.
+        if not info or (info.get('trailingPE') is None and info.get('totalRevenue') is None and info.get('totalCash') is None):
+            print("   [System Log: ❌ yfinance returned empty data. Short-circuiting LLM to prevent hallucination.]")
+            msg = AIMessage(content=f"⚠️ **DATA RETRIEVAL ERROR**\nCould not fetch fundamental data for `{ticker_query}`. The ticker may be delisted, recently IPO'd, or requires a different regional suffix.")
+            return {"messages": list(state["messages"]) + [msg]}
+        
+        # 4. Format the raw financial data
         def fmt(val): return f"${val:,.0f}" if isinstance(val, (int, float)) else val
         
         report = f"**Valuation & Profitability:**\n"
@@ -279,21 +278,20 @@ def fundamental_node(state: ApplicationState):
         report += f"• Free Cash Flow: {fmt(info.get('freeCashflow', 'N/A'))}\n"
         report += f"• Debt-To-Equity Ratio: {info.get('debtToEquity', 'N/A')}\n"
 
-        print("   [System Log: Passing raw financials to LLM for deep fundamental synthesis...]")
+        print("   [System Log: Passing validated financials to LLM for deep fundamental synthesis...]")
 
-        # 5. The Deep Synthesis Pass (NEW: Institutional Reasoning Layer)
+        # 5. Safe Synthesis Pass
         analysis_sys = SystemMessage(content="""You are a Wall Street fundamental equity analyst. 
-        Read the provided raw quantitative financial metrics for the requested company.
-        You must write a highly detailed, professional, 3-paragraph fundamental analysis covering:
-        1. Profitability & Valuation: Analyze the P/E ratio and margins. Does this point to an overvalued tech stock or a value play?
-        2. Solvency & Liquidity: Evaluate the debt-to-equity ratio against the free cash flow. Are they over-leveraged? Can they survive a macro downturn?
-        3. Final Analyst Assessment: Provide a grounded conclusion on the long-term fundamental health of the business.
-        Do not just repeat the numbers back; interpret what they mean for a long-term investor holding the stock.""")
+        Read the provided raw quantitative financial metrics.
+        CRITICAL RULE: If the data is mostly 'N/A', do not invent an analysis. State that the data is insufficient.
+        Otherwise, write a 3-paragraph fundamental analysis covering:
+        1. Profitability & Valuation
+        2. Solvency & Liquidity
+        3. Final Analyst Assessment""")
         
         synthesis_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.2)
         analysis = synthesis_llm.invoke([analysis_sys, HumanMessage(content=f"Ticker: {ticker_query}\n\n{report}")])
         
-        # 6. Format the Final Output beautifully for Streamlit
         final_response = f"🔓 *[Human Approved Execution]*\n\n📈 **DEEP FUNDAMENTAL ANALYSIS: {ticker_query}**\n\n### 1. Raw Quantitative Data\n{report}\n\n### 2. Chief Analyst Synthesis\n{analysis.content}"
         msg = AIMessage(content=final_response)
         
